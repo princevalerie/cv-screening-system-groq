@@ -1,0 +1,19 @@
+streamlit
+pandas
+PyPDF2
+python-dateutil
+
+# LangGraph and Groq integration
+groq
+langgraph>=0.6.0
+langchain-core>=0.3.0
+
+# RAG implementation dependencies
+faiss-cpu
+langchain
+langchain-community
+langchain-google-genai
+langsmith
+
+# Pydantic for data validation
+pydantic>=2.0.0
