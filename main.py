@@ -407,7 +407,7 @@ def score_cv_with_groq(cv_text: str, job_title: str, job_desc: str, min_req: str
 def main():
     initialize_session_state()
     
-    st.title("🎯 HR ATS - CV Screening System")    
+    st.title("🎯 CV Screening System")    
     # Setup Groq API in sidebar
     api_configured, groq_client = setup_groq_api()
     
