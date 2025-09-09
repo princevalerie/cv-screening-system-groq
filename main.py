@@ -15,7 +15,7 @@ from pathlib import Path
 # LangGraph + Groq Integration
 from langgraph.graph import StateGraph, START, END
 from typing import TypedDict
-from groq import Groq
+import boto3
 
 # Pydantic for data validation
 from pydantic import BaseModel, Field, field_validator
@@ -91,53 +91,41 @@ def initialize_session_state():
         st.session_state.analysis_complete = False
 
 # API Configuration
-def setup_groq_api():
-    """Setup Groq API with environment variable or sidebar input"""
+def setup_bedrock_api():
+    """Setup AWS Bedrock with environment variables or sidebar input"""
     try:
-        # Check if API key exists in environment variables
-        groq_api_key = os.environ.get("GROQ_API_KEY")
-        
-        if groq_api_key:
-            # Use environment variable
-            try:
-                client = Groq(api_key=groq_api_key)
-                test_response = client.chat.completions.create(
-                    model="moonshotai/kimi-k2-instruct",
-                    messages=[{"role": "user", "content": "Test connection"}],
-                    max_tokens=10
-                )
-                st.sidebar.success("✅ Groq API connected (from environment)")
-                return True, client
-            except Exception as e:
-                st.sidebar.error(f"❌ Invalid GROQ_API_KEY in environment: {str(e)}")
-                return False, None
-        else:
-            # Show sidebar input if no environment variable
-            groq_api_key = st.sidebar.text_input(
-                "🔑 Groq API Key", 
-                type="password",
-                help="Enter your Groq API key to enable AI analysis",
-                placeholder="gsk_..."
+        aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID")
+        aws_secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+        aws_region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+
+        if not (aws_access_key_id and aws_secret_access_key and aws_region):
+            st.sidebar.markdown("**🔐 AWS Credentials**")
+            aws_access_key_id = st.sidebar.text_input("AWS Access Key ID", value=aws_access_key_id or "", type="password")
+            aws_secret_access_key = st.sidebar.text_input("AWS Secret Access Key", value=aws_secret_access_key or "", type="password")
+            aws_region = st.sidebar.text_input("AWS Region", value=aws_region or "us-east-1")
+
+        if not (aws_access_key_id and aws_secret_access_key and aws_region):
+            st.sidebar.warning("⚠️ Please provide AWS credentials and region")
+            return False, None
+
+        try:
+            client = boto3.client(
+                "bedrock-runtime",
+                region_name=aws_region,
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
             )
-            
-            if not groq_api_key:
-                st.sidebar.warning("⚠️ Please enter your Groq API key to continue")
-                return False, None
-            
-            # Test the API key from sidebar
-            try:
-                client = Groq(api_key=groq_api_key)
-                test_response = client.chat.completions.create(
-                    model="moonshotai/kimi-k2-instruct",
-                    messages=[{"role": "user", "content": "Test connection"}],
-                    max_tokens=10
-                )
-                st.sidebar.success("✅ Groq API connection successful")
-                return True, client
-            except Exception as e:
-                st.sidebar.error(f"❌ Invalid API key: {str(e)}")
-                return False, None
-            
+            # Quick connectivity test using Converse API
+            _test = client.converse(
+                modelId="anthropic.claude-3-5-sonnet-20240620-v1:0",
+                messages=[{"role": "user", "content": [{"text": "ping"}]}],
+                inferenceConfig={"maxTokens": 5, "temperature": 0.0},
+            )
+            st.sidebar.success("✅ Bedrock connected (Claude 3.5 Sonnet)")
+            return True, client
+        except Exception as e:
+            st.sidebar.error(f"❌ Bedrock connection failed: {str(e)}")
+            return False, None
     except Exception as e:
         st.sidebar.error(f"❌ API setup error: {str(e)}")
         return False, None
@@ -276,7 +264,7 @@ def create_robust_cv_scoring_graph():
             state["phone_number"] = contact_info["phone"]
             state["email"] = contact_info["email"]
             
-            client = st.session_state.groq_client
+            client = st.session_state.bedrock_client
             
             prompt = f"""
             You are an expert HR recruiter. Analyze this CV for the job position and respond with ONLY valid JSON format.
@@ -306,19 +294,11 @@ def create_robust_cv_scoring_graph():
             - Overall fit (10%)
             """
 
-            response = client.chat.completions.create(
-                model="moonshotai/kimi-k2-instruct",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                max_tokens=1000,
-                temperature=0.7
+            br_resp = client.converse(
+                modelId="anthropic.claude-3-5-sonnet-20240620-v1:0",
+                messages=[{"role": "user", "content": [{"text": prompt}]}]
             )
-            
-            response_text = response.choices[0].message.content.strip()
+            response_text = br_resp["output"]["message"]["content"][0]["text"].strip()
             result = safe_json_parse(response_text)
             
             # Populate state
@@ -354,8 +334,8 @@ def create_robust_cv_scoring_graph():
     
     return builder.compile()
 
-def score_cv_with_groq(cv_text: str, job_title: str, job_desc: str, min_req: str) -> Dict[str, Any]:
-    """Score CV using Groq AI with robust error handling"""
+def score_cv_with_bedrock(cv_text: str, job_title: str, job_desc: str, min_req: str) -> Dict[str, Any]:
+    """Score CV using AWS Bedrock with robust error handling"""
     try:
         workflow = create_robust_cv_scoring_graph()
         
@@ -408,16 +388,16 @@ def main():
     initialize_session_state()
     
     st.title("🎯 CV Screening System")    
-    # Setup Groq API in sidebar
-    api_configured, groq_client = setup_groq_api()
+    # Setup Bedrock API in sidebar
+    api_configured, bedrock_client = setup_bedrock_api()
     
     if not api_configured:
-        st.error("🔑 Please configure your Groq API key in the sidebar to continue!")
-        st.info("💡 Get your API key from [Groq Console](https://console.groq.com/)")
+        st.error("🔑 Please provide AWS credentials (Access Key, Secret, Region) in the sidebar!")
+        st.info("💡 Ensure Bedrock model access is enabled for your account/region")
         st.stop()
     
     # Store client in session state
-    st.session_state.groq_client = groq_client
+    st.session_state.bedrock_client = bedrock_client
     
     cv_analyzer_page()
 
@@ -495,7 +475,7 @@ def process_and_analyze_cvs(uploaded_files, job_title, job_desc, min_requirement
             )
             
             try:
-                result = score_cv_with_groq(clean_text, job_title, job_desc, min_requirements)
+                result = score_cv_with_bedrock(clean_text, job_title, job_desc, min_requirements)
                 
                 cv_metadata.score = result["score"]
                 cv_metadata.skills_match = result["skills_match"]
